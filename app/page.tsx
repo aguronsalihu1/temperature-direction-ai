@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import WorldClockMap from "@/components/WorldClockMap";
 
 interface HourlyPoint {
   time: string;
@@ -135,9 +136,11 @@ export default function Home() {
   }, [activeParams]);
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 16px" }}>
+    <main style={{ maxWidth: 960, margin: "0 auto", padding: "32px 16px" }}>
       <h1 style={{ fontSize: 28, marginBottom: 4 }}>🌡️ Temperature Direction AI</h1>
       <p style={{ opacity: 0.65, marginTop: 0 }}>Search a city to see where the temperature is heading.</p>
+
+      <WorldClockMap />
 
       <div style={{ position: "relative", margin: "20px 0" }}>
         <div style={{ display: "flex", gap: 8 }}>
