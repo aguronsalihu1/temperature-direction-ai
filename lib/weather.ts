@@ -30,6 +30,17 @@ export interface NwsSnapshot {
   note?: string;
 }
 
+export interface WindySnapshot {
+  available: boolean;
+  temperature_c?: number;
+  wind_speed_kmh?: number;
+  wind_direction_deg?: number;
+  cloud_cover_pct?: number;
+  time?: string;
+  url: string;
+  note?: string;
+}
+
 export interface WeatherBundle {
   source_primary: "open-meteo" | "nws" | "windy";
   windy_used: boolean;
@@ -38,6 +49,7 @@ export interface WeatherBundle {
   fetched_at: string;
   source_urls: { label: string; url: string }[];
   nws_snapshot: NwsSnapshot;
+  windy_snapshot: WindySnapshot;
 }
 
 export interface PredictionOutput {
@@ -277,12 +289,14 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     source_urls.push({ label: "Weather.gov / NWS (official US forecast)", url: nwsUrl });
   }
 
-  if (!hourly || hourly.length === 0) {
-    hourly = await fetchWindyHourly(city.latitude, city.longitude);
-    if (hourly && hourly.length > 0) {
-      source_primary = "windy";
-      source_urls.push({ label: "Windy (GFS model)", url: "https://www.windy.com" });
-    }
+  // Always attempt Windy independently too (it's a no-op internally if
+  // WINDY_API_KEY isn't set), so we can show it as its own labeled section
+  // even when it isn't the source picked for the main figures.
+  const windyResult = await fetchWindyHourly(city.latitude, city.longitude);
+  if ((!hourly || hourly.length === 0) && windyResult && windyResult.length > 0) {
+    hourly = windyResult;
+    source_primary = "windy";
+    source_urls.push({ label: "Windy (GFS model)", url: "https://www.windy.com" });
   }
 
   // Always fetch Open-Meteo for its accurate current_weather + local
@@ -339,6 +353,30 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     nws_snapshot = { available: false, url: nwsUrl, note: "Weather.gov request failed or returned no data." };
   }
 
+  // Build a standalone Windy snapshot, independent of which source ended up
+  // primary above — so it can always be shown as its own labeled section.
+  let windy_snapshot: WindySnapshot;
+  if (!process.env.WINDY_API_KEY) {
+    windy_snapshot = {
+      available: false,
+      url: "https://www.windy.com",
+      note: "Windy isn't connected yet — add WINDY_API_KEY to enable it."
+    };
+  } else if (windyResult && windyResult.length > 0) {
+    const windyNow = trimByRealTime(windyResult, now.getTime())[0] ?? windyResult[0];
+    windy_snapshot = {
+      available: true,
+      temperature_c: windyNow.temperature_c ?? undefined,
+      wind_speed_kmh: windyNow.wind_speed_kmh ?? undefined,
+      wind_direction_deg: windyNow.wind_direction_deg ?? undefined,
+      cloud_cover_pct: windyNow.cloud_cover_pct ?? undefined,
+      time: windyNow.time,
+      url: "https://www.windy.com"
+    };
+  } else {
+    windy_snapshot = { available: false, url: "https://www.windy.com", note: "Windy request failed or returned no data." };
+  }
+
   return {
     source_primary,
     windy_used: source_primary === "windy",
@@ -346,7 +384,8 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     current,
     fetched_at: now.toISOString(),
     source_urls,
-    nws_snapshot
+    nws_snapshot,
+    windy_snapshot
   };
 }
 

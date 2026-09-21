@@ -38,6 +38,16 @@ interface ApiResult {
     url: string;
     note?: string;
   };
+  windy_snapshot: {
+    available: boolean;
+    temperature_c?: number;
+    wind_speed_kmh?: number;
+    wind_direction_deg?: number;
+    cloud_cover_pct?: number;
+    time?: string;
+    url: string;
+    note?: string;
+  };
   current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   hourly: HourlyPoint[];
   peak_heat: { time: string; temperature_c: number } | null;
@@ -350,6 +360,40 @@ export default function Home() {
               Shown separately because Weather.gov is a distinct, official source from the figures above (which may
               come from {result.source_primary === "nws" ? "Weather.gov as well" : "Open-Meteo or Windy"}).
             </p>
+          </div>
+
+          <div
+            style={{
+              padding: 16,
+              borderRadius: 12,
+              background: "#ecfeff",
+              border: "1px solid #a5f3fc",
+              marginBottom: 20
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>🌬️ According to Windy</div>
+            {result.windy_snapshot.available ? (
+              <div style={{ fontSize: 14 }}>
+                Windy says it's currently <b>{result.windy_snapshot.temperature_c?.toFixed(1)}°C</b>
+                {result.windy_snapshot.wind_speed_kmh != null
+                  ? `, wind ${result.windy_snapshot.wind_speed_kmh.toFixed(0)} km/h`
+                  : ""}
+                {result.windy_snapshot.cloud_cover_pct != null
+                  ? `, cloud cover ${result.windy_snapshot.cloud_cover_pct.toFixed(0)}%`
+                  : ""}
+                .{" "}
+                <a href={result.windy_snapshot.url} target="_blank" rel="noreferrer" style={{ color: "#0e7490" }}>
+                  View on Windy
+                </a>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.65 }}>
+                {result.windy_snapshot.note}{" "}
+                <a href="https://api.windy.com" target="_blank" rel="noreferrer" style={{ color: "#0e7490" }}>
+                  Get a free API key
+                </a>
+              </div>
+            )}
           </div>
 
           <h3>📈 Next hours</h3>

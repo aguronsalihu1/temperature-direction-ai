@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
     fetched_at: bundle.fetched_at,
     source_urls: bundle.source_urls,
     nws_snapshot: bundle.nws_snapshot,
+    windy_snapshot: bundle.windy_snapshot,
     current: bundle.current,
     hourly: bundle.hourly.slice(0, 24),
     peak_heat,
