@@ -115,6 +115,16 @@ function trimToNowForward(hourly: HourlyPoint[], currentTime: string): HourlyPoi
   return idx >= 0 ? hourly.slice(idx) : hourly;
 }
 
+// For sources with real, unambiguous timestamps (NWS ISO w/ offset, Windy UTC
+// "Z" strings) — compare as actual instants in time rather than as strings,
+// since string comparison breaks across differently-formatted timestamps.
+function trimByRealTime(hourly: HourlyPoint[], nowMs: number): HourlyPoint[] {
+  // 30-minute grace window so the "current" hour isn't dropped early.
+  const cutoff = nowMs - 30 * 60 * 1000;
+  const idx = hourly.findIndex((h) => new Date(h.time).getTime() >= cutoff);
+  return idx >= 0 ? hourly.slice(idx) : hourly;
+}
+
 // --- Weather.gov / NWS for US locations ---
 function isLikelyUS(lat: number, lon: number): boolean {
   // Rough continental US + Alaska/Hawaii bounding boxes
@@ -248,19 +258,21 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
   // timezone-aware timestamps; use it as the data source if nothing else
   // worked, and as the anchor for "now" either way.
   const openMeteo = await fetchOpenMeteo(city.latitude, city.longitude);
+  const now = new Date();
   if (!hourly || hourly.length === 0) {
-    hourly = openMeteo.hourly;
+    hourly = trimToNowForward(openMeteo.hourly, openMeteo.currentTime);
     source_primary = "open-meteo";
     source_urls.push({
       label: "Open-Meteo (ECMWF/GFS blended model)",
       url: `https://open-meteo.com/en/docs?latitude=${city.latitude}&longitude=${city.longitude}`
     });
   } else {
-    hourly = trimToNowForward(hourly, openMeteo.currentTime);
+    // hourly came from NWS or Windy, which use real (non-naive) timestamps —
+    // trim against the actual current instant, not Open-Meteo's local string.
+    hourly = trimByRealTime(hourly, now.getTime());
   }
 
   const localHourly = trimToNowForward(openMeteo.hourly, openMeteo.currentTime);
-  const now = new Date();
   const localTimeString = new Intl.DateTimeFormat("en-GB", {
     timeZone: city.timezone,
     hour: "2-digit",

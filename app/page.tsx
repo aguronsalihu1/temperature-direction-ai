@@ -246,7 +246,14 @@ export default function Home() {
             }}
           >
             <Stat label="🌡️ Temperature" value={`${result.current.temperature_c?.toFixed(1)}°C`} />
-            <Stat label="☀️ Sun altitude" value={`${result.current.sun_altitude_deg}°`} />
+            <Stat
+              label="☀️ Sun position"
+              value={
+                result.current.sun_altitude_deg >= 0
+                  ? `${result.current.sun_altitude_deg}° above horizon`
+                  : `${Math.abs(result.current.sun_altitude_deg)}° below horizon (night)`
+              }
+            />
             <Stat label="💨 Wind" value={`${result.current.wind_speed_kmh?.toFixed(0) ?? "–"} km/h`} />
             <Stat label="☁️ Cloud cover" value={`${result.current.cloud_cover_pct ?? "–"}%`} />
             <Stat label="💧 Humidity" value={`${result.current.humidity ?? "–"}%`} />
@@ -284,10 +291,10 @@ export default function Home() {
               <thead>
                 <tr style={{ textAlign: "left", opacity: 0.6 }}>
                   <th style={{ padding: 6 }}>Time</th>
-                  <th>🌡️</th>
-                  <th>🌧️ %</th>
-                  <th>💨</th>
-                  <th>☁️</th>
+                  <th>🌡️ Temp</th>
+                  <th>🌧️ Rain %</th>
+                  <th>💨 Wind</th>
+                  <th>☁️ Cloud</th>
                 </tr>
               </thead>
               <tbody>
