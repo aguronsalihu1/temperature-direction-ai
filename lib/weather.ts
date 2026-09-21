@@ -216,7 +216,7 @@ async function fetchWindyHourly(lat: number, lon: number): Promise<HourlyPoint[]
         lat,
         lon,
         model: "gfs",
-        parameters: ["temp", "wind", "rh", "dewpoint", "lclouds", "mclouds", "hclouds"],
+        parameters: ["temp", "wind", "dewpoint", "rh"],
         levels: ["surface"],
         key
       })
