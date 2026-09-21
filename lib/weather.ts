@@ -24,6 +24,8 @@ export interface WeatherBundle {
   windy_used: boolean;
   hourly: HourlyPoint[];
   current: HourlyPoint & { sun_altitude_deg: number };
+  fetched_at: string;
+  source_urls: { label: string; url: string }[];
 }
 
 export interface PredictionOutput {
@@ -167,20 +169,32 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
   const usSource = isLikelyUS(city.latitude, city.longitude);
   let hourly: HourlyPoint[] | null = null;
   let source_primary: "open-meteo" | "nws" = "open-meteo";
+  const source_urls: { label: string; url: string }[] = [];
 
   if (usSource) {
     hourly = await fetchNWS(city.latitude, city.longitude);
-    if (hourly && hourly.length > 0) source_primary = "nws";
+    if (hourly && hourly.length > 0) {
+      source_primary = "nws";
+      source_urls.push({
+        label: "Weather.gov / NWS (official US forecast)",
+        url: `https://forecast.weather.gov/MapClick.php?lat=${city.latitude}&lon=${city.longitude}`
+      });
+    }
   }
   if (!hourly || hourly.length === 0) {
     hourly = await fetchOpenMeteo(city.latitude, city.longitude);
     source_primary = "open-meteo";
+    source_urls.push({
+      label: "Open-Meteo (ECMWF/GFS blended model)",
+      url: `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}&longitude=${city.longitude}&hourly=temperature_2m`
+    });
   }
 
   const windy = await fetchWindy(city.latitude, city.longitude);
   const windy_used = !!windy;
   if (windy?.wind_speed_kmh != null && hourly[0]) {
     hourly[0] = { ...hourly[0], wind_speed_kmh: windy.wind_speed_kmh };
+    source_urls.push({ label: "Windy (GFS wind overlay)", url: "https://www.windy.com" });
   }
 
   const now = new Date();
@@ -189,7 +203,14 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     sun_altitude_deg: sunAltitudeDeg(city.latitude, city.longitude, now)
   };
 
-  return { source_primary, windy_used, hourly, current };
+  return {
+    source_primary,
+    windy_used,
+    hourly,
+    current,
+    fetched_at: now.toISOString(),
+    source_urls
+  };
 }
 
 // --- Heuristic temperature-direction model ---

@@ -55,6 +55,8 @@ export async function GET(req: NextRequest) {
     city: match,
     source_primary: bundle.source_primary,
     windy_used: bundle.windy_used,
+    fetched_at: bundle.fetched_at,
+    source_urls: bundle.source_urls,
     current: bundle.current,
     hourly: bundle.hourly.slice(0, 24),
     prediction,

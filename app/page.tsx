@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 interface HourlyPoint {
   time: string;
@@ -17,6 +17,8 @@ interface ApiResult {
   city: { name: string; country: string; latitude: number; longitude: number };
   source_primary: string;
   windy_used: boolean;
+  fetched_at: string;
+  source_urls: { label: string; url: string }[];
   current: HourlyPoint & { sun_altitude_deg: number };
   hourly: HourlyPoint[];
   prediction: {
@@ -30,27 +32,60 @@ interface ApiResult {
 
 const arrow: Record<string, string> = { rise: "⬆️", same: "➡️", fall: "⬇️" };
 
+const REFRESH_MS = 10000;
+
 export default function Home() {
   const [query, setQuery] = useState("Milano");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiResult | null>(null);
+  const [activeCity, setActiveCity] = useState<string | null>(null);
+  const [secondsToRefresh, setSecondsToRefresh] = useState(10);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function search() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
+  const runSearch = useCallback(async (city: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const res = await fetch(`/api/predict?city=${encodeURIComponent(query)}`);
+      const res = await fetch(`/api/predict?city=${encodeURIComponent(city)}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
       setResult(data);
+      setActiveCity(city);
+      setSecondsToRefresh(10);
     } catch (e: any) {
-      setError(e.message);
+      if (!silent) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
+  }, []);
+
+  function search() {
+    runSearch(query);
   }
+
+  // Auto-refresh every 10 seconds once a city is active
+  useEffect(() => {
+    if (!activeCity) return;
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      runSearch(activeCity, true);
+    }, REFRESH_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [activeCity, runSearch]);
+
+  // Visual countdown between refreshes
+  useEffect(() => {
+    if (!activeCity) return;
+    const tick = setInterval(() => {
+      setSecondsToRefresh((s) => (s <= 1 ? 10 : s - 1));
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [activeCity]);
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 16px" }}>
@@ -95,10 +130,23 @@ export default function Home() {
           <h2 style={{ marginBottom: 4 }}>
             {result.city.name}, {result.city.country}
           </h2>
-          <p style={{ opacity: 0.6, marginTop: 0, fontSize: 13 }}>
-            Source: {result.source_primary}
-            {result.windy_used ? " + windy" : ""}
-          </p>
+          <div style={{ opacity: 0.7, marginTop: 0, fontSize: 12, marginBottom: 12 }}>
+            <div>
+              🕒 Fetched at {new Date(result.fetched_at).toLocaleTimeString()} · next refresh in{" "}
+              <b>{secondsToRefresh}s</b>
+            </div>
+            <div style={{ marginTop: 4 }}>
+              Sources:{" "}
+              {result.source_urls.map((s, i) => (
+                <span key={s.url}>
+                  <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>
+                    {s.label}
+                  </a>
+                  {i < result.source_urls.length - 1 ? " · " : ""}
+                </span>
+              ))}
+            </div>
+          </div>
 
           <div
             style={{
