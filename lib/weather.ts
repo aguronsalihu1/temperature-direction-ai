@@ -221,10 +221,17 @@ async function fetchWindyHourly(lat: number, lon: number): Promise<HourlyPoint[]
         key
       })
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      console.error(`Windy API error ${res.status}: ${bodyText.slice(0, 500)}`);
+      return null;
+    }
     const data = await res.json();
     const ts: number[] = data.ts ?? [];
-    if (!ts.length) return null;
+    if (!ts.length) {
+      console.error(`Windy API returned no timestamps. Body: ${JSON.stringify(data).slice(0, 500)}`);
+      return null;
+    }
     const u = data["wind_u-surface"] ?? [];
     const v = data["wind_v-surface"] ?? [];
     return ts.map((t, i) => {
@@ -244,7 +251,8 @@ async function fetchWindyHourly(lat: number, lon: number): Promise<HourlyPoint[]
         precipitation_prob_pct: null
       };
     });
-  } catch {
+  } catch (err) {
+    console.error("Windy fetch threw:", err);
     return null;
   }
 }
