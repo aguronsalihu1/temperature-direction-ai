@@ -38,6 +38,15 @@ interface ApiResult {
     url: string;
     note?: string;
   };
+  accuweather_snapshot: {
+    available: boolean;
+    temperature_c?: number;
+    weather_text?: string;
+    wind_speed_kmh?: number;
+    time?: string;
+    url: string;
+    note?: string;
+  };
   current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   hourly: HourlyPoint[];
   peak_heat: { time: string; temperature_c: number } | null;
@@ -350,6 +359,38 @@ export default function Home() {
               Shown separately because Weather.gov is a distinct, official source from the figures above (which may
               come from {result.source_primary === "nws" ? "Weather.gov as well" : "Open-Meteo or Windy"}).
             </p>
+          </div>
+
+          <div
+            style={{
+              padding: 16,
+              borderRadius: 12,
+              background: "#fdf4ff",
+              border: "1px solid #f0abfc",
+              marginBottom: 20
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>🟣 According to AccuWeather</div>
+            {result.accuweather_snapshot.available ? (
+              <div style={{ fontSize: 14 }}>
+                AccuWeather says it's currently <b>{result.accuweather_snapshot.temperature_c?.toFixed(1)}°C</b>
+                {result.accuweather_snapshot.weather_text ? `, ${result.accuweather_snapshot.weather_text}` : ""}
+                {result.accuweather_snapshot.wind_speed_kmh != null
+                  ? `, wind ${result.accuweather_snapshot.wind_speed_kmh.toFixed(0)} km/h`
+                  : ""}
+                .{" "}
+                <a href={result.accuweather_snapshot.url} target="_blank" rel="noreferrer" style={{ color: "#a21caf" }}>
+                  View on AccuWeather
+                </a>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.65 }}>
+                {result.accuweather_snapshot.note}{" "}
+                <a href="https://developer.accuweather.com" target="_blank" rel="noreferrer" style={{ color: "#a21caf" }}>
+                  Get a free API key
+                </a>
+              </div>
+            )}
           </div>
 
           <h3>📈 Next hours</h3>
