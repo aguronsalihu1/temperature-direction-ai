@@ -29,8 +29,18 @@ interface ApiResult {
   windy_used: boolean;
   fetched_at: string;
   source_urls: { label: string; url: string }[];
+  nws_snapshot: {
+    available: boolean;
+    temperature_c?: number;
+    short_forecast?: string;
+    wind_speed_kmh?: number;
+    time?: string;
+    url: string;
+    note?: string;
+  };
   current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   hourly: HourlyPoint[];
+  peak_heat: { time: string; temperature_c: number } | null;
   prediction: {
     direction: "rise" | "same" | "fall";
     probability_rise: number;
@@ -288,6 +298,60 @@ export default function Home() {
             </p>
           </div>
 
+          {result.peak_heat && (
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: "#fff7ed",
+                border: "1px solid #fed7aa",
+                marginBottom: 20,
+                fontSize: 14
+              }}
+            >
+              🔥 <b>Peak heat today:</b> {result.peak_heat.temperature_c.toFixed(1)}°C around{" "}
+              <b>
+                {new Date(result.peak_heat.time).toLocaleString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  weekday: "short"
+                })}
+              </b>
+            </div>
+          )}
+
+          <div
+            style={{
+              padding: 16,
+              borderRadius: 12,
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              marginBottom: 20
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>🇺🇸 According to Weather.gov (NWS)</div>
+            {result.nws_snapshot.available ? (
+              <div style={{ fontSize: 14 }}>
+                Weather.gov says it's currently{" "}
+                <b>{result.nws_snapshot.temperature_c?.toFixed(1)}°C</b>
+                {result.nws_snapshot.short_forecast ? `, ${result.nws_snapshot.short_forecast.toLowerCase()}` : ""}
+                {result.nws_snapshot.wind_speed_kmh != null
+                  ? `, wind ${result.nws_snapshot.wind_speed_kmh.toFixed(0)} km/h`
+                  : ""}
+                .{" "}
+                <a href={result.nws_snapshot.url} target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                  View on weather.gov
+                </a>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.65 }}>{result.nws_snapshot.note}</div>
+            )}
+            <p style={{ fontSize: 11, opacity: 0.5, marginTop: 8, marginBottom: 0 }}>
+              Shown separately because Weather.gov is a distinct, official source from the figures above (which may
+              come from {result.source_primary === "nws" ? "Weather.gov as well" : "Open-Meteo or Windy"}).
+            </p>
+          </div>
+
           <h3>📈 Next hours</h3>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -301,17 +365,28 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {result.hourly.slice(0, 12).map((h) => (
-                  <tr key={h.time} style={{ borderTop: `1px solid ${BORDER}` }}>
-                    <td style={{ padding: 6 }}>
-                      {new Date(h.time).toLocaleString([], { hour: "2-digit", weekday: "short" })}
-                    </td>
-                    <td>{h.temperature_c?.toFixed(1) ?? "–"}°</td>
-                    <td>{h.precipitation_prob_pct ?? "–"}</td>
-                    <td>{h.wind_speed_kmh?.toFixed(0) ?? "–"}</td>
-                    <td>{h.cloud_cover_pct ?? "–"}%</td>
-                  </tr>
-                ))}
+                {result.hourly.slice(0, 12).map((h) => {
+                  const isPeak = result.peak_heat && h.time === result.peak_heat.time;
+                  return (
+                    <tr
+                      key={h.time}
+                      style={{
+                        borderTop: `1px solid ${BORDER}`,
+                        background: isPeak ? "#fff7ed" : "transparent",
+                        fontWeight: isPeak ? 700 : 400
+                      }}
+                    >
+                      <td style={{ padding: 6 }}>
+                        {isPeak ? "🔥 " : ""}
+                        {new Date(h.time).toLocaleString([], { hour: "2-digit", weekday: "short" })}
+                      </td>
+                      <td>{h.temperature_c?.toFixed(1) ?? "–"}°</td>
+                      <td>{h.precipitation_prob_pct ?? "–"}</td>
+                      <td>{h.wind_speed_kmh?.toFixed(0) ?? "–"}</td>
+                      <td>{h.cloud_cover_pct ?? "–"}%</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -17,6 +17,17 @@ export interface HourlyPoint {
   wind_direction_deg: number | null;
   cloud_cover_pct: number | null;
   precipitation_prob_pct: number | null;
+  short_forecast?: string;
+}
+
+export interface NwsSnapshot {
+  available: boolean;
+  temperature_c?: number;
+  short_forecast?: string;
+  wind_speed_kmh?: number;
+  time?: string;
+  url: string;
+  note?: string;
 }
 
 export interface WeatherBundle {
@@ -26,6 +37,7 @@ export interface WeatherBundle {
   current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   fetched_at: string;
   source_urls: { label: string; url: string }[];
+  nws_snapshot: NwsSnapshot;
 }
 
 export interface PredictionOutput {
@@ -34,6 +46,21 @@ export interface PredictionOutput {
   probability_same: number;
   probability_fall: number;
   confidence_score: number;
+}
+
+export interface PeakHeat {
+  time: string;
+  temperature_c: number;
+}
+
+export function findPeakHeat(hourly: HourlyPoint[], hoursAhead = 24): PeakHeat | null {
+  const window = hourly.slice(0, hoursAhead).filter((h) => h.temperature_c != null);
+  if (window.length === 0) return null;
+  let best = window[0];
+  for (const h of window) {
+    if ((h.temperature_c as number) > (best.temperature_c as number)) best = h;
+  }
+  return { time: best.time, temperature_c: best.temperature_c as number };
 }
 
 // --- Geocoding via Open-Meteo (free, no key) ---
@@ -157,7 +184,8 @@ async function fetchNWS(lat: number, lon: number): Promise<HourlyPoint[] | null>
       wind_speed_kmh: p.windSpeed ? parseFloat(p.windSpeed) * 1.60934 : null,
       wind_direction_deg: null,
       cloud_cover_pct: null,
-      precipitation_prob_pct: p.probabilityOfPrecipitation?.value ?? null
+      precipitation_prob_pct: p.probabilityOfPrecipitation?.value ?? null,
+      short_forecast: p.shortForecast ?? undefined
     }));
   } catch {
     return null;
@@ -235,15 +263,18 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
   let source_primary: "open-meteo" | "nws" | "windy" = "open-meteo";
   const source_urls: { label: string; url: string }[] = [];
 
+  // Always attempt Weather.gov independently, so we can show it as its own
+  // labeled section even when it isn't the source picked for the main figures.
+  const nwsUrl = `https://forecast.weather.gov/MapClick.php?lat=${city.latitude}&lon=${city.longitude}`;
+  let nwsResult: HourlyPoint[] | null = null;
   if (usSource) {
-    hourly = await fetchNWS(city.latitude, city.longitude);
-    if (hourly && hourly.length > 0) {
-      source_primary = "nws";
-      source_urls.push({
-        label: "Weather.gov / NWS (official US forecast)",
-        url: `https://forecast.weather.gov/MapClick.php?lat=${city.latitude}&lon=${city.longitude}`
-      });
-    }
+    nwsResult = await fetchNWS(city.latitude, city.longitude);
+  }
+
+  if (nwsResult && nwsResult.length > 0) {
+    hourly = nwsResult;
+    source_primary = "nws";
+    source_urls.push({ label: "Weather.gov / NWS (official US forecast)", url: nwsUrl });
   }
 
   if (!hourly || hourly.length === 0) {
@@ -289,13 +320,33 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     timezone: city.timezone
   };
 
+  // Build a standalone Weather.gov snapshot, independent of which source
+  // ended up primary above — so it can always be shown as its own section.
+  let nws_snapshot: NwsSnapshot;
+  if (!usSource) {
+    nws_snapshot = { available: false, url: nwsUrl, note: "Weather.gov only covers US locations." };
+  } else if (nwsResult && nwsResult.length > 0) {
+    const nwsNow = trimByRealTime(nwsResult, now.getTime())[0] ?? nwsResult[0];
+    nws_snapshot = {
+      available: true,
+      temperature_c: nwsNow.temperature_c ?? undefined,
+      short_forecast: nwsNow.short_forecast,
+      wind_speed_kmh: nwsNow.wind_speed_kmh ?? undefined,
+      time: nwsNow.time,
+      url: nwsUrl
+    };
+  } else {
+    nws_snapshot = { available: false, url: nwsUrl, note: "Weather.gov request failed or returned no data." };
+  }
+
   return {
     source_primary,
     windy_used: source_primary === "windy",
     hourly,
     current,
     fetched_at: now.toISOString(),
-    source_urls
+    source_urls,
+    nws_snapshot
   };
 }
 

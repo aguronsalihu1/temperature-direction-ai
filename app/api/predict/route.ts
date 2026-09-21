@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { geocodeCity, getWeatherBundle, predictDirection, CityMatch } from "@/lib/weather";
+import { geocodeCity, getWeatherBundle, predictDirection, findPeakHeat, CityMatch } from "@/lib/weather";
 import { getSupabase, upsertCity } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
 
   const bundle = await getWeatherBundle(match);
   const prediction = predictDirection(bundle.hourly);
+  const peak_heat = findPeakHeat(bundle.hourly, 24);
 
   let logged = false;
   try {
@@ -74,8 +75,10 @@ export async function GET(req: NextRequest) {
     windy_used: bundle.windy_used,
     fetched_at: bundle.fetched_at,
     source_urls: bundle.source_urls,
+    nws_snapshot: bundle.nws_snapshot,
     current: bundle.current,
     hourly: bundle.hourly.slice(0, 24),
+    peak_heat,
     prediction,
     logged
   });
