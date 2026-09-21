@@ -30,16 +30,6 @@ export interface NwsSnapshot {
   note?: string;
 }
 
-export interface AccuWeatherSnapshot {
-  available: boolean;
-  temperature_c?: number;
-  weather_text?: string;
-  wind_speed_kmh?: number;
-  time?: string;
-  url: string;
-  note?: string;
-}
-
 export interface WeatherBundle {
   source_primary: "open-meteo" | "nws" | "windy";
   windy_used: boolean;
@@ -48,7 +38,6 @@ export interface WeatherBundle {
   fetched_at: string;
   source_urls: { label: string; url: string }[];
   nws_snapshot: NwsSnapshot;
-  accuweather_snapshot: AccuWeatherSnapshot;
 }
 
 export interface PredictionOutput {
@@ -248,44 +237,6 @@ async function fetchWindyHourly(lat: number, lon: number): Promise<HourlyPoint[]
   }
 }
 
-// --- AccuWeather (optional; only used if ACCUWEATHER_API_KEY is set) ---
-// Two-step API: resolve a location key from lat/lon, then fetch current conditions.
-async function fetchAccuWeatherSnapshot(
-  lat: number,
-  lon: number
-): Promise<{ temperature_c: number; weather_text: string; wind_speed_kmh: number; time: string; url: string } | null> {
-  const key = process.env.ACCUWEATHER_API_KEY;
-  if (!key) return null;
-  try {
-    const locRes = await fetch(
-      `https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey=${key}&q=${lat},${lon}`
-    );
-    if (!locRes.ok) return null;
-    const loc = await locRes.json();
-    const locationKey = loc?.Key;
-    const url = loc?.Links?.canonical ?? "https://www.accuweather.com";
-    if (!locationKey) return null;
-
-    const condRes = await fetch(
-      `https://dataservice.accuweather.com/currentconditions/v1/${locationKey}?apikey=${key}&details=true`
-    );
-    if (!condRes.ok) return null;
-    const condArr = await condRes.json();
-    const cond = condArr?.[0];
-    if (!cond) return null;
-
-    return {
-      temperature_c: cond.Temperature?.Metric?.Value,
-      weather_text: cond.WeatherText,
-      wind_speed_kmh: cond.Wind?.Speed?.Metric?.Value,
-      time: cond.LocalObservationDateTime,
-      url
-    };
-  } catch {
-    return null;
-  }
-}
-
 function sunAltitudeDeg(lat: number, lon: number, date: Date): number {
   // Simplified solar elevation angle calculation
   const rad = Math.PI / 180;
@@ -388,32 +339,6 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     nws_snapshot = { available: false, url: nwsUrl, note: "Weather.gov request failed or returned no data." };
   }
 
-  // AccuWeather works worldwide, but only if ACCUWEATHER_API_KEY is configured.
-  let accuweather_snapshot: AccuWeatherSnapshot;
-  if (!process.env.ACCUWEATHER_API_KEY) {
-    accuweather_snapshot = {
-      available: false,
-      url: "https://developer.accuweather.com",
-      note: "AccuWeather isn't connected yet — add ACCUWEATHER_API_KEY to enable it."
-    };
-  } else {
-    const aw = await fetchAccuWeatherSnapshot(city.latitude, city.longitude);
-    accuweather_snapshot = aw
-      ? {
-          available: true,
-          temperature_c: aw.temperature_c,
-          weather_text: aw.weather_text,
-          wind_speed_kmh: aw.wind_speed_kmh,
-          time: aw.time,
-          url: aw.url
-        }
-      : {
-          available: false,
-          url: "https://www.accuweather.com",
-          note: "AccuWeather request failed or returned no data."
-        };
-  }
-
   return {
     source_primary,
     windy_used: source_primary === "windy",
@@ -421,8 +346,7 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
     current,
     fetched_at: now.toISOString(),
     source_urls,
-    nws_snapshot,
-    accuweather_snapshot
+    nws_snapshot
   };
 }
 
