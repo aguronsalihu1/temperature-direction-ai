@@ -13,13 +13,22 @@ interface HourlyPoint {
   precipitation_prob_pct: number | null;
 }
 
+interface GeoOption {
+  name: string;
+  admin1: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+}
+
 interface ApiResult {
   city: { name: string; country: string; latitude: number; longitude: number };
   source_primary: string;
   windy_used: boolean;
   fetched_at: string;
   source_urls: { label: string; url: string }[];
-  current: HourlyPoint & { sun_altitude_deg: number };
+  current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   hourly: HourlyPoint[];
   prediction: {
     direction: "rise" | "same" | "fall";
@@ -31,29 +40,34 @@ interface ApiResult {
 }
 
 const arrow: Record<string, string> = { rise: "⬆️", same: "➡️", fall: "⬇️" };
-
 const REFRESH_MS = 10000;
+const CARD_BG = "#f7f8fa";
+const BORDER = "#e3e6ea";
 
 export default function Home() {
   const [query, setQuery] = useState("Milano");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiResult | null>(null);
-  const [activeCity, setActiveCity] = useState<string | null>(null);
+  const [activeParams, setActiveParams] = useState<Record<string, string> | null>(null);
   const [secondsToRefresh, setSecondsToRefresh] = useState(10);
+  const [suggestions, setSuggestions] = useState<GeoOption[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runSearch = useCallback(async (city: string, silent = false) => {
+  const runSearch = useCallback(async (params: Record<string, string>, silent = false) => {
     if (!silent) {
       setLoading(true);
       setError(null);
     }
     try {
-      const res = await fetch(`/api/predict?city=${encodeURIComponent(city)}`, { cache: "no-store" });
+      const qs = new URLSearchParams(params).toString();
+      const res = await fetch(`/api/predict?${qs}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
       setResult(data);
-      setActiveCity(city);
+      setActiveParams(params);
       setSecondsToRefresh(10);
     } catch (e: any) {
       if (!silent) setError(e.message);
@@ -62,84 +76,159 @@ export default function Home() {
     }
   }, []);
 
-  function search() {
-    runSearch(query);
+  function searchByText() {
+    setShowDropdown(false);
+    runSearch({ city: query });
   }
 
-  // Auto-refresh every 10 seconds once a city is active
+  function selectSuggestion(opt: GeoOption) {
+    setQuery(`${opt.name}${opt.admin1 ? ", " + opt.admin1 : ""}${opt.country ? ", " + opt.country : ""}`);
+    setShowDropdown(false);
+    setSuggestions([]);
+    runSearch({
+      name: opt.name,
+      country: opt.country,
+      lat: String(opt.latitude),
+      lon: String(opt.longitude),
+      timezone: opt.timezone
+    });
+  }
+
+  function onQueryChange(value: string) {
+    setQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/geocode?q=${encodeURIComponent(value)}`);
+        const data = await res.json();
+        setSuggestions(data.results ?? []);
+        setShowDropdown(true);
+      } catch {
+        // ignore
+      }
+    }, 250);
+  }
+
+  // Auto-refresh every 10 seconds once a location is active
   useEffect(() => {
-    if (!activeCity) return;
+    if (!activeParams) return;
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
-      runSearch(activeCity, true);
+      runSearch(activeParams, true);
     }, REFRESH_MS);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [activeCity, runSearch]);
+  }, [activeParams, runSearch]);
 
-  // Visual countdown between refreshes
   useEffect(() => {
-    if (!activeCity) return;
+    if (!activeParams) return;
     const tick = setInterval(() => {
       setSecondsToRefresh((s) => (s <= 1 ? 10 : s - 1));
     }, 1000);
     return () => clearInterval(tick);
-  }, [activeCity]);
+  }, [activeParams]);
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 16px" }}>
       <h1 style={{ fontSize: 28, marginBottom: 4 }}>🌡️ Temperature Direction AI</h1>
-      <p style={{ opacity: 0.7, marginTop: 0 }}>Search a city to see where the temperature is heading.</p>
+      <p style={{ opacity: 0.65, marginTop: 0 }}>Search a city to see where the temperature is heading.</p>
 
-      <div style={{ display: "flex", gap: 8, margin: "20px 0" }}>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
-          placeholder="e.g. Milano"
-          style={{
-            flex: 1,
-            padding: "10px 14px",
-            borderRadius: 8,
-            border: "1px solid #2a333d",
-            background: "#131a22",
-            color: "#e8edf2"
-          }}
-        />
-        <button
-          onClick={search}
-          disabled={loading}
-          style={{
-            padding: "10px 18px",
-            borderRadius: 8,
-            border: "none",
-            background: "#3b82f6",
-            color: "white",
-            cursor: "pointer"
-          }}
-        >
-          {loading ? "..." : "🔎 Search"}
-        </button>
+      <div style={{ position: "relative", margin: "20px 0" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchByText()}
+            onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
+            placeholder="e.g. Milano"
+            style={{
+              flex: 1,
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: `1px solid ${BORDER}`,
+              background: "#ffffff",
+              color: "#1a1f26"
+            }}
+          />
+          <button
+            onClick={searchByText}
+            disabled={loading}
+            style={{
+              padding: "10px 18px",
+              borderRadius: 8,
+              border: "none",
+              background: "#2563eb",
+              color: "white",
+              cursor: "pointer"
+            }}
+          >
+            {loading ? "..." : "🔎 Search"}
+          </button>
+        </div>
+
+        {showDropdown && suggestions.length > 0 && (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 4px)",
+              left: 0,
+              right: 0,
+              background: "#ffffff",
+              border: `1px solid ${BORDER}`,
+              borderRadius: 8,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+              zIndex: 10,
+              overflow: "hidden"
+            }}
+          >
+            {suggestions.map((s, i) => (
+              <div
+                key={`${s.name}-${s.latitude}-${i}`}
+                onClick={() => selectSuggestion(s)}
+                style={{
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                  borderTop: i > 0 ? `1px solid ${BORDER}` : "none"
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <b>{s.name}</b>
+                <span style={{ opacity: 0.6 }}>
+                  {s.admin1 ? `, ${s.admin1}` : ""}
+                  {s.country ? `, ${s.country}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {error && <p style={{ color: "#f87171" }}>{error}</p>}
+      {error && <p style={{ color: "#dc2626" }}>{error}</p>}
 
       {result && (
         <div>
           <h2 style={{ marginBottom: 4 }}>
             {result.city.name}, {result.city.country}
           </h2>
-          <div style={{ opacity: 0.7, marginTop: 0, fontSize: 12, marginBottom: 12 }}>
+          <div style={{ opacity: 0.7, marginTop: 0, fontSize: 12, marginBottom: 12, lineHeight: 1.6 }}>
             <div>
-              🕒 Fetched at {new Date(result.fetched_at).toLocaleTimeString()} · next refresh in{" "}
+              🕒 Local time: <b>{result.current.local_time}</b> ({result.current.timezone})
+            </div>
+            <div>
+              Data fetched at {new Date(result.fetched_at).toLocaleTimeString()} · next refresh in{" "}
               <b>{secondsToRefresh}s</b>
             </div>
-            <div style={{ marginTop: 4 }}>
-              Sources:{" "}
+            <div>
+              Source:{" "}
               {result.source_urls.map((s, i) => (
                 <span key={s.url}>
-                  <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>
+                  <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
                     {s.label}
                   </a>
                   {i < result.source_urls.length - 1 ? " · " : ""}
@@ -158,10 +247,7 @@ export default function Home() {
           >
             <Stat label="🌡️ Temperature" value={`${result.current.temperature_c?.toFixed(1)}°C`} />
             <Stat label="☀️ Sun altitude" value={`${result.current.sun_altitude_deg}°`} />
-            <Stat
-              label="💨 Wind"
-              value={`${result.current.wind_speed_kmh?.toFixed(0) ?? "–"} km/h`}
-            />
+            <Stat label="💨 Wind" value={`${result.current.wind_speed_kmh?.toFixed(0) ?? "–"} km/h`} />
             <Stat label="☁️ Cloud cover" value={`${result.current.cloud_cover_pct ?? "–"}%`} />
             <Stat label="💧 Humidity" value={`${result.current.humidity ?? "–"}%`} />
             <Stat label="💦 Dew point" value={`${result.current.dew_point_c?.toFixed(1) ?? "–"}°C`} />
@@ -171,8 +257,8 @@ export default function Home() {
             style={{
               padding: 16,
               borderRadius: 12,
-              background: "#131a22",
-              border: "1px solid #2a333d",
+              background: CARD_BG,
+              border: `1px solid ${BORDER}`,
               marginBottom: 20
             }}
           >
@@ -187,8 +273,8 @@ export default function Home() {
               <span>➡️ Same {Math.round(result.prediction.probability_same * 100)}%</span>
               <span>⬇️ Fall {Math.round(result.prediction.probability_fall * 100)}%</span>
             </div>
-            <p style={{ fontSize: 12, opacity: 0.5, marginTop: 10, marginBottom: 0 }}>
-              Heuristic estimate — not yet a calibrated statistical model.
+            <p style={{ fontSize: 12, opacity: 0.55, marginTop: 10, marginBottom: 0 }}>
+              Heuristic estimate — not yet a calibrated statistical model. No forecast can be 100% certain.
             </p>
           </div>
 
@@ -206,8 +292,10 @@ export default function Home() {
               </thead>
               <tbody>
                 {result.hourly.slice(0, 12).map((h) => (
-                  <tr key={h.time} style={{ borderTop: "1px solid #2a333d" }}>
-                    <td style={{ padding: 6 }}>{new Date(h.time).toLocaleString([], { hour: "2-digit", weekday: "short" })}</td>
+                  <tr key={h.time} style={{ borderTop: `1px solid ${BORDER}` }}>
+                    <td style={{ padding: 6 }}>
+                      {new Date(h.time).toLocaleString([], { hour: "2-digit", weekday: "short" })}
+                    </td>
                     <td>{h.temperature_c?.toFixed(1) ?? "–"}°</td>
                     <td>{h.precipitation_prob_pct ?? "–"}</td>
                     <td>{h.wind_speed_kmh?.toFixed(0) ?? "–"}</td>
@@ -225,7 +313,7 @@ export default function Home() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: "#131a22", border: "1px solid #2a333d", borderRadius: 10, padding: 12 }}>
+    <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12 }}>
       <div style={{ fontSize: 12, opacity: 0.6 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 600 }}>{value}</div>
     </div>

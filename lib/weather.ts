@@ -20,10 +20,10 @@ export interface HourlyPoint {
 }
 
 export interface WeatherBundle {
-  source_primary: "open-meteo" | "nws";
+  source_primary: "open-meteo" | "nws" | "windy";
   windy_used: boolean;
   hourly: HourlyPoint[];
-  current: HourlyPoint & { sun_altitude_deg: number };
+  current: HourlyPoint & { sun_altitude_deg: number; local_time: string; timezone: string };
   fetched_at: string;
   source_urls: { label: string; url: string }[];
 }
@@ -37,33 +37,58 @@ export interface PredictionOutput {
 }
 
 // --- Geocoding via Open-Meteo (free, no key) ---
-export async function geocodeCity(query: string): Promise<CityMatch | null> {
-  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-    query
-  )}&count=1&language=en&format=json`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const r = data?.results?.[0];
-  if (!r) return null;
-  return {
-    name: r.name,
-    country: r.country ?? "",
-    latitude: r.latitude,
-    longitude: r.longitude,
-    timezone: r.timezone ?? "UTC"
-  };
+export interface CityCandidate extends CityMatch {
+  admin1?: string;
+  population?: number;
 }
 
-// --- Open-Meteo forecast (base + fallback for everyone) ---
-async function fetchOpenMeteo(lat: number, lon: number): Promise<HourlyPoint[]> {
+async function fetchGeocodeCandidates(query: string): Promise<CityCandidate[]> {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+    query
+  )}&count=8&language=en&format=json`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const results = data?.results ?? [];
+  return results.map((r: any) => ({
+    name: r.name,
+    country: r.country ?? "",
+    admin1: r.admin1 ?? "",
+    latitude: r.latitude,
+    longitude: r.longitude,
+    timezone: r.timezone ?? "UTC",
+    population: r.population ?? 0
+  }));
+}
+
+export async function geocodeCandidates(query: string): Promise<CityCandidate[]> {
+  const candidates = await fetchGeocodeCandidates(query);
+  // Largest / most populous match first, so "Milano" resolves to Milan, Italy
+  // instead of a same-named small town elsewhere.
+  return candidates.sort((a, b) => (b.population ?? 0) - (a.population ?? 0));
+}
+
+export async function geocodeCity(query: string): Promise<CityMatch | null> {
+  const candidates = await geocodeCandidates(query);
+  return candidates[0] ?? null;
+}
+
+// --- Open-Meteo forecast (last-resort fallback for everyone) ---
+// Uses timezone=auto so returned hourly timestamps are in the CITY'S OWN local
+// time, and current_weather=true for a true up-to-the-minute reading — not
+// just the value for hour zero of the day.
+async function fetchOpenMeteo(
+  lat: number,
+  lon: number
+): Promise<{ hourly: HourlyPoint[]; currentTime: string }> {
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lon),
     hourly:
       "temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,cloud_cover,precipitation_probability",
+    current_weather: "true",
     forecast_days: "2",
-    timezone: "UTC"
+    timezone: "auto"
   });
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
   if (!res.ok) throw new Error("open-meteo failed");
@@ -79,7 +104,15 @@ async function fetchOpenMeteo(lat: number, lon: number): Promise<HourlyPoint[]> 
     cloud_cover_pct: h.cloud_cover?.[i] ?? null,
     precipitation_prob_pct: h.precipitation_probability?.[i] ?? null
   }));
-  return out;
+  // current_weather.time marks "now" in the city's local time, in the same
+  // naive format as hourly.time — use it to trim the table to now-forward.
+  const currentTime: string = data.current_weather?.time ?? h.time[0];
+  return { hourly: out, currentTime };
+}
+
+function trimToNowForward(hourly: HourlyPoint[], currentTime: string): HourlyPoint[] {
+  const idx = hourly.findIndex((h) => h.time >= currentTime);
+  return idx >= 0 ? hourly.slice(idx) : hourly;
 }
 
 // --- Weather.gov / NWS for US locations ---
@@ -121,8 +154,8 @@ async function fetchNWS(lat: number, lon: number): Promise<HourlyPoint[] | null>
   }
 }
 
-// --- Windy (optional; only used if WINDY_API_KEY is set) ---
-async function fetchWindy(lat: number, lon: number): Promise<Partial<HourlyPoint> | null> {
+// --- Windy (used as 2nd-priority source, only if WINDY_API_KEY is set) ---
+async function fetchWindyHourly(lat: number, lon: number): Promise<HourlyPoint[] | null> {
   const key = process.env.WINDY_API_KEY;
   if (!key) return null;
   try {
@@ -133,15 +166,34 @@ async function fetchWindy(lat: number, lon: number): Promise<Partial<HourlyPoint
         lat,
         lon,
         model: "gfs",
-        parameters: ["wind", "temp"],
+        parameters: ["temp", "wind", "rh", "dewpoint", "lclouds", "mclouds", "hclouds"],
+        levels: ["surface"],
         key
       })
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return {
-      wind_speed_kmh: data["wind_u-surface"]?.[0] != null ? Math.abs(data["wind_u-surface"][0]) * 3.6 : null
-    };
+    const ts: number[] = data.ts ?? [];
+    if (!ts.length) return null;
+    const u = data["wind_u-surface"] ?? [];
+    const v = data["wind_v-surface"] ?? [];
+    return ts.map((t, i) => {
+      const uu = u[i] ?? 0;
+      const vv = v[i] ?? 0;
+      const windSpeedKmh = Math.sqrt(uu * uu + vv * vv) * 3.6;
+      const cloud =
+        Math.max(data["lclouds-surface"]?.[i] ?? 0, data["mclouds-surface"]?.[i] ?? 0, data["hclouds-surface"]?.[i] ?? 0);
+      return {
+        time: new Date(t).toISOString(),
+        temperature_c: data["temp-surface"]?.[i] != null ? data["temp-surface"][i] - 273.15 : null,
+        humidity: data["rh-surface"]?.[i] ?? null,
+        dew_point_c: data["dewpoint-surface"]?.[i] != null ? data["dewpoint-surface"][i] - 273.15 : null,
+        wind_speed_kmh: windSpeedKmh,
+        wind_direction_deg: (Math.atan2(-uu, -vv) * 180) / Math.PI,
+        cloud_cover_pct: cloud || null,
+        precipitation_prob_pct: null
+      };
+    });
   } catch {
     return null;
   }
@@ -165,10 +217,12 @@ function sunAltitudeDeg(lat: number, lon: number, date: Date): number {
   return Math.round(altitude * 10) / 10;
 }
 
+// Source priority: 1) Weather.gov/NWS (US only, official) 2) Windy (if
+// WINDY_API_KEY set) 3) Open-Meteo (always-available fallback for everyone).
 export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> {
   const usSource = isLikelyUS(city.latitude, city.longitude);
   let hourly: HourlyPoint[] | null = null;
-  let source_primary: "open-meteo" | "nws" = "open-meteo";
+  let source_primary: "open-meteo" | "nws" | "windy" = "open-meteo";
   const source_urls: { label: string; url: string }[] = [];
 
   if (usSource) {
@@ -181,31 +235,51 @@ export async function getWeatherBundle(city: CityMatch): Promise<WeatherBundle> 
       });
     }
   }
+
   if (!hourly || hourly.length === 0) {
-    hourly = await fetchOpenMeteo(city.latitude, city.longitude);
+    hourly = await fetchWindyHourly(city.latitude, city.longitude);
+    if (hourly && hourly.length > 0) {
+      source_primary = "windy";
+      source_urls.push({ label: "Windy (GFS model)", url: "https://www.windy.com" });
+    }
+  }
+
+  // Always fetch Open-Meteo for its accurate current_weather + local
+  // timezone-aware timestamps; use it as the data source if nothing else
+  // worked, and as the anchor for "now" either way.
+  const openMeteo = await fetchOpenMeteo(city.latitude, city.longitude);
+  if (!hourly || hourly.length === 0) {
+    hourly = openMeteo.hourly;
     source_primary = "open-meteo";
     source_urls.push({
       label: "Open-Meteo (ECMWF/GFS blended model)",
-      url: `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}&longitude=${city.longitude}&hourly=temperature_2m`
+      url: `https://open-meteo.com/en/docs?latitude=${city.latitude}&longitude=${city.longitude}`
     });
+  } else {
+    hourly = trimToNowForward(hourly, openMeteo.currentTime);
   }
 
-  const windy = await fetchWindy(city.latitude, city.longitude);
-  const windy_used = !!windy;
-  if (windy?.wind_speed_kmh != null && hourly[0]) {
-    hourly[0] = { ...hourly[0], wind_speed_kmh: windy.wind_speed_kmh };
-    source_urls.push({ label: "Windy (GFS wind overlay)", url: "https://www.windy.com" });
-  }
-
+  const localHourly = trimToNowForward(openMeteo.hourly, openMeteo.currentTime);
   const now = new Date();
+  const localTimeString = new Intl.DateTimeFormat("en-GB", {
+    timeZone: city.timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    day: "2-digit",
+    month: "short"
+  }).format(now);
+
   const current = {
-    ...hourly[0],
-    sun_altitude_deg: sunAltitudeDeg(city.latitude, city.longitude, now)
+    ...(hourly[0] ?? localHourly[0]),
+    sun_altitude_deg: sunAltitudeDeg(city.latitude, city.longitude, now),
+    local_time: localTimeString,
+    timezone: city.timezone
   };
 
   return {
     source_primary,
-    windy_used,
+    windy_used: source_primary === "windy",
     hourly,
     current,
     fetched_at: now.toISOString(),

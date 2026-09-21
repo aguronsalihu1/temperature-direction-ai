@@ -1,18 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { geocodeCity, getWeatherBundle, predictDirection } from "@/lib/weather";
+import { geocodeCity, getWeatherBundle, predictDirection, CityMatch } from "@/lib/weather";
 import { getSupabase, upsertCity } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const city = req.nextUrl.searchParams.get("city");
-  if (!city) {
-    return NextResponse.json({ error: "Missing ?city=" }, { status: 400 });
-  }
+  const lat = req.nextUrl.searchParams.get("lat");
+  const lon = req.nextUrl.searchParams.get("lon");
+  const name = req.nextUrl.searchParams.get("name");
+  const country = req.nextUrl.searchParams.get("country");
+  const timezone = req.nextUrl.searchParams.get("timezone");
 
-  const match = await geocodeCity(city);
-  if (!match) {
-    return NextResponse.json({ error: `City not found: ${city}` }, { status: 404 });
+  let match: CityMatch | null = null;
+
+  if (lat && lon) {
+    // Precise selection from the autocomplete dropdown — skip re-geocoding.
+    match = {
+      name: name ?? "Selected location",
+      country: country ?? "",
+      latitude: parseFloat(lat),
+      longitude: parseFloat(lon),
+      timezone: timezone ?? "UTC"
+    };
+  } else if (city) {
+    match = await geocodeCity(city);
+    if (!match) {
+      return NextResponse.json({ error: `City not found: ${city}` }, { status: 404 });
+    }
+  } else {
+    return NextResponse.json({ error: "Missing ?city= or ?lat=&lon=" }, { status: 400 });
   }
 
   const bundle = await getWeatherBundle(match);
